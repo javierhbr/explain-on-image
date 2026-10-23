@@ -1,11 +1,17 @@
-export const defaults = Object.freeze({ margin: 64, radius: 16, shadow: true, background: "dark", ratio: "auto", signature: false });
-export const defaultStyle = Object.freeze({ color: "#ff8a3d", width: 5, fontSize: 30 });
+export const defaults = Object.freeze({ margin: 64, radius: 16, shadow: true, background: "dark", ratio: "auto", signature: false, backgroundColor: "#f4f3ef", scale: 1, signatureText: "" });
+export const SCALES = Object.freeze([.25,.5,.75,1,1.5,2]);
+// Strips control, bidi-override and zero-width characters; caps by code point so pairs are never split.
+export const cleanSignature = value => Array.from(String(value).replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g,"")).slice(0,60).join("");
+export const defaultStyle = Object.freeze({ color: "#ff8a3d", width: 5, fontSize: 30, font: "system" });
+// System fonts only: the app is offline and the CSP blocks remote fonts.
+export const FONTS = Object.freeze({ system: '"Segoe UI",system-ui,sans-serif', serif: 'Georgia,"Times New Roman",serif', mono: '"SF Mono",Menlo,Consolas,monospace', rounded: 'ui-rounded,"SF Pro Rounded","Arial Rounded MT Bold",sans-serif', hand: '"Marker Felt","Comic Sans MS",cursive' });
+export const textFont = (a) => `600 ${a.fontSize}px ${FONTS[a.font] || FONTS.system}`;
 export const clone = value => JSON.parse(JSON.stringify(value));
 export const clamp = (v,min,max) => Math.max(min,Math.min(max,v));
 export function cleanPreferences(value = {}) {
   const f = value.finish || {};
   const s = value.style || {};
-  return { finish: { margin: clamp(Number.isFinite(Number(f.margin))?Number(f.margin):defaults.margin,0,200), radius: clamp(Number.isFinite(Number(f.radius))?Number(f.radius):defaults.radius,0,60), shadow: typeof f.shadow === "boolean" ? f.shadow : defaults.shadow, background: ["white","dark","gradient"].includes(f.background)?f.background:defaults.background, ratio: f.ratio === "wide"?"wide":"auto", signature: f.signature === true }, style: { color: /^#[\da-f]{6}$/i.test(s.color)?s.color:defaultStyle.color, width: clamp(Number(s.width)||5,2,16), fontSize: clamp(Number(s.fontSize)||30,16,72) } };
+  return { finish: { margin: clamp(Number.isFinite(Number(f.margin))?Number(f.margin):defaults.margin,0,200), radius: clamp(Number.isFinite(Number(f.radius))?Number(f.radius):defaults.radius,0,60), shadow: typeof f.shadow === "boolean" ? f.shadow : defaults.shadow, background: ["white","dark","gradient","none","custom"].includes(f.background)?f.background:defaults.background, ratio: f.ratio === "wide"?"wide":"auto", signature: f.signature === true, backgroundColor: /^#[\da-f]{6}$/i.test(f.backgroundColor)?f.backgroundColor:defaults.backgroundColor, scale: SCALES.includes(Number(f.scale))?Number(f.scale):defaults.scale, signatureText: typeof f.signatureText === "string" ? cleanSignature(f.signatureText) : defaults.signatureText }, style: { color: /^#[\da-f]{6}$/i.test(s.color)?s.color:defaultStyle.color, width: clamp(Number(s.width)||5,2,16), fontSize: clamp(Number(s.fontSize)||30,16,72), font: Object.hasOwn(FONTS, s.font) ? s.font : defaultStyle.font } };
 }
 export function layout(w,h,finish) {
   const margin = finish.margin;
@@ -16,7 +22,7 @@ export function layout(w,h,finish) {
     const unit = Math.ceil(Math.max(width/16,height/9));
     width = unit*16; height = unit*9;
   }
-  return { width, height, x: Math.floor((width-w)/2), y: Math.floor((height-signature-h)/2), imageWidth:w,imageHeight:h, signature };
+  return { width, height, x: Math.floor((width-w)/2), y: Math.floor((height-signature-h)/2), imageWidth:w,imageHeight:h, signature, outputWidth: Math.max(1,Math.round(width*(finish.scale||1))), outputHeight: Math.max(1,Math.round(height*(finish.scale||1))) };
 }
 export function imagePoint(clientX,clientY,bounds,composition) {
   return { x:(clientX-bounds.left)*composition.width/bounds.width-composition.x, y:(clientY-bounds.top)*composition.height/bounds.height-composition.y };

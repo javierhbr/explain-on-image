@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {layout,imagePoint,normalRect,nextNumber,moveAnnotation,History,defaults,cleanPreferences,hitAnnotation} from "../src/core.mjs";
+import {layout,imagePoint,normalRect,nextNumber,moveAnnotation,History,defaults,cleanPreferences,hitAnnotation,cleanSignature} from "../src/core.mjs";
 test("16:9 contains full portrait screenshot at native resolution",()=>{const l=layout(900,1800,{...defaults,ratio:"wide",signature:true});assert.equal(l.width/l.height,16/9);assert.ok(l.x>=64&&l.y>=64);assert.ok(l.x+900<=l.width-64);assert.ok(l.y+1800<=l.height-64-38);assert.equal(l.imageWidth,900);assert.equal(l.imageHeight,1800);});
 test("automatic format reserves signature outside screenshot",()=>{const l=layout(1200,700,{...defaults,margin:0,signature:true});assert.equal(l.height,738);assert.equal(l.y,0);assert.ok(l.height-19>=l.y+700);});
 test("coordinates stay attached through zoom and window resize",()=>{const l=layout(1920,1080,defaults);for(const scale of [.1,.25,.5,1,1.25,1.5,2,4]){const b={left:123,top:67,width:l.width*scale,height:l.height*scale};const p=imagePoint(123+(l.x+745)*scale,67+(l.y+386)*scale,b,l);assert.ok(Math.abs(p.x-745)<1e-8);assert.ok(Math.abs(p.y-386)<1e-8);}});
@@ -23,3 +23,4 @@ test("capture geometry clamps screen edges and rejects tiny or invalid selection
   assert.throws(()=>captureGeometry.cropRectangle({x:NaN,y:0,width:1,height:1},100,100));
 });
 test("missing preferences preserve defaults",()=>assert.deepEqual(cleanPreferences({}).finish,defaults));
+test("signature text drops control, bidi and zero-width characters without splitting emoji",()=>{assert.equal(cleanSignature("A\u202eB\u200bC\u0007"),"ABC");assert.equal(Array.from(cleanSignature("😀".repeat(70))).length,60);assert.equal(cleanPreferences({finish:{signatureText:"x\u2066y"}}).finish.signatureText,"xy");});

@@ -1,5 +1,7 @@
-import { layout, annotationBounds } from "./core.mjs";
+import { layout, annotationBounds, textFont } from "./core.mjs";
+import { outputFits } from "./image-policy.mjs";
 const makeCanvas=(w,h)=>{const c=document.createElement("canvas");c.width=w;c.height=h;return c;};
+const isLight=hex=>{const rgb=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2]>.179;};
 function rounded(ctx,x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,Math.min(r,w/2,h/2));}
 function drawAnnotation(ctx,a,pixelScale=1){
   ctx.save();ctx.strokeStyle=a.color;ctx.fillStyle=a.color;ctx.lineWidth=a.width||5;ctx.lineJoin="round";ctx.lineCap="round";
@@ -13,7 +15,7 @@ function drawAnnotation(ctx,a,pixelScale=1){
     const rgb=[1,3,5].map(i=>parseInt(a.color.slice(i,i+2),16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);const lum=.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];ctx.fillStyle=lum>.179?"#101923":"#ffffff";
     ctx.font=`800 ${Math.round(a.size*.53)}px "Segoe UI", system-ui, sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(String(a.number),a.x,a.y+1);
   } else if(a.type==="text") {
-    ctx.fillStyle="#101b2bee";rounded(ctx,a.x,a.y,a.w,a.h,6);ctx.fill();ctx.fillStyle=a.color;ctx.font=`600 ${a.fontSize}px "Segoe UI",system-ui,sans-serif`;ctx.textBaseline="middle";ctx.fillText(a.text,a.x+12,a.y+a.h/2,a.w-24);
+    ctx.fillStyle="#101b2bee";rounded(ctx,a.x,a.y,a.w,a.h,6);ctx.fill();ctx.fillStyle=a.color;ctx.font=textFont(a);ctx.textBaseline="middle";ctx.fillText(a.text,a.x+12,a.y+a.h/2,a.w-24);
   }
   ctx.restore();
 }
@@ -34,7 +36,7 @@ function paintRedactions(ctx,annotations) {
 export class CompositionRenderer {
   constructor(image=null) {
     this.image=image;this.redacted=null;this.redactionKey=null;this.blurs=new Map();this.cachePixels=0;
-    this.blurBudget=MAX_BLUR_CACHE_PIXELS;this.exportPixels=0;
+    this.blurBudget=MAX_BLUR_CACHE_PIXELS;this.exportPixels=0;this.signatureFallback="";
     this.stats={previewPaints:0,nativePaints:0,blurBuilds:0,sourceBuilds:0};
   }
   clearBlurCache() {
@@ -96,8 +98,9 @@ export class CompositionRenderer {
     if(finish.background==="gradient"){
       const g=ctx.createLinearGradient(0,0,l.width,l.height);
       g.addColorStop(0,"#263b55");g.addColorStop(.55,"#19283e");g.addColorStop(1,"#443344");ctx.fillStyle=g;
-    } else ctx.fillStyle=finish.background==="white"?"#ffffff":"#101f34";
-    ctx.fillRect(0,0,l.width,l.height);
+    } else ctx.fillStyle=finish.background==="white"?"#ffffff":finish.background==="custom"?finish.backgroundColor:"#101f34";
+    // "none" leaves the margin transparent in the exported PNG.
+    if(finish.background!=="none")ctx.fillRect(0,0,l.width,l.height);
     if(finish.shadow){
       ctx.save();ctx.shadowColor="#00000066";ctx.shadowBlur=28*pixelScale;ctx.shadowOffsetY=12*pixelScale;
       ctx.fillStyle="#101b2b";rounded(ctx,l.x,l.y,l.imageWidth,l.imageHeight,finish.radius);ctx.fill();ctx.restore();
@@ -115,18 +118,21 @@ export class CompositionRenderer {
     paintRedactions(ctx,annotations);
     ctx.restore();
     if(finish.signature){
-      ctx.fillStyle=finish.background==="white"?"#4b5563":"#d0d8e5";ctx.font="500 15px Segoe UI,system-ui,sans-serif";
+      const light=finish.background==="white"||finish.background==="none"||(finish.background==="custom"&&isLight(finish.backgroundColor));
+      ctx.fillStyle=light?"#4b5563":"#d0d8e5";ctx.font="500 15px Segoe UI,system-ui,sans-serif";
       ctx.textAlign="right";ctx.textBaseline="middle";
-      ctx.fillText("Migue Baena IA",l.width-Math.max(20,finish.margin),l.height-Math.max(19,finish.margin/2));
+      const inset=Math.max(20,finish.margin);
+      ctx.fillText(finish.signatureText||this.signatureFallback,l.width-inset,l.height-Math.max(19,finish.margin/2),Math.max(1,l.width-inset*2));
     }
   }
   renderNative(annotations,finish,target=null) {
     const {width,height}=imageSize(this.image),l=layout(width,height,finish);
-    if(l.width*l.height>80000000||Math.max(l.width,l.height)>30000)throw Error("La composición supera el límite de 80 megapíxeles.");
-    const canvas=target||makeCanvas(l.width,l.height);
-    resize(canvas,l.width,l.height);
-    const ctx=canvas.getContext("2d");ctx.clearRect(0,0,l.width,l.height);
-    ctx.save();this.draw(ctx,annotations,finish,l);ctx.restore();this.stats.nativePaints++;
+    const w=l.outputWidth,h=l.outputHeight;
+    if(!outputFits(w,h,finish.scale))throw Error("The composition exceeds the export size limit.");
+    const canvas=target||makeCanvas(w,h);
+    resize(canvas,w,h);
+    const ctx=canvas.getContext("2d");ctx.clearRect(0,0,w,h);ctx.imageSmoothingQuality="high";
+    ctx.save();ctx.scale(w/l.width,h/l.height);this.draw(ctx,annotations,finish,l,w/l.width);ctx.restore();this.stats.nativePaints++;
     return {canvas,layout:l};
   }
   renderPreview(canvas,annotations,finish,l,camera) {
@@ -136,13 +142,16 @@ export class CompositionRenderer {
     ctx.save();ctx.scale(dpr,dpr);ctx.translate(left,top);ctx.scale(scale,scale);
     this.draw(ctx,annotations,finish,l,dpr*scale);ctx.restore();this.stats.previewPaints++;
   }
-  async exportPNG(annotations,finish) {
-    if(this.exportPixels)throw Error("Ya hay una exportación en curso.");
+  exportPNG(annotations,finish) { return this.exportImage(annotations,finish,"image/png"); }
+  async exportImage(annotations,finish,type="image/png") {
+    if(this.exportPixels)throw Error("An export is already in progress.");
+    // JPG has no alpha channel: a transparent margin would encode as black.
+    if(type==="image/jpeg"&&finish.background==="none")finish={...finish,background:"white"};
     const {canvas}=this.renderNative(annotations,finish);
     this.exportPixels=canvas.width*canvas.height;
     try {
-      const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error("No se ha podido generar el PNG.")),"image/png"));
-      if(blob.size>160*1024*1024)throw Error("El PNG exportado supera los 160 MB.");
+      const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error("Could not generate the image.")),type,.92));
+      if(blob.size>160*1024*1024)throw Error("The exported image exceeds 160 MB.");
       return blob;
     } finally {release(canvas);this.exportPixels=0;}
   }

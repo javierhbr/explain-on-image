@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inspectEncodedImage, validateImageBlob, sanitizeExportPNG, LIMITS } from "../src/image-policy.mjs";
+import { inspectEncodedImage, validateImageBlob, sanitizeExportPNG, LIMITS,outputFits } from "../src/image-policy.mjs";
 
 function pngHeader(width,height) {
   const b=new Uint8Array(33),v=new DataView(b.buffer);
@@ -52,5 +52,6 @@ test("export rejects oversized dimensions and malformed chunk lengths",()=>{
 test("ambiguous JPEG frame headers cannot bypass dimension preflight",()=>{
   const a=jpeg(20,20),b=jpeg(1200,720),data=new Uint8Array(a.length+b.length-4);
   data.set(a.subarray(0,a.length-2));data.set(b.subarray(2),a.length-2);
-  assert.throws(()=>inspectEncodedImage(data),/varias cabeceras/);
+  assert.throws(()=>inspectEncodedImage(data),/multiple image headers/);
 });
+test("exports above 100 % get a smaller pixel budget and every export keeps the side limit",()=>{assert.equal(outputFits(8000,8000,1),true);assert.equal(outputFits(8000,8000,2),false);assert.equal(outputFits(6000,6000,1.5),true);assert.equal(outputFits(30001,10,1),false);});

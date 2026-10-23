@@ -106,7 +106,7 @@ try {
         const annotations=[{type:"redact",x:150,y:100,w:100,h:80,color:"#111827"},{type:"blur",x:120,y:80,w:160,h:120}];
         const blob=await renderer.exportPNG(annotations,{margin:0,radius:0,shadow:false,background:"white",ratio:"auto",signature:false});
         const data=new Uint8Array(await blob.arrayBuffer());
-        const save=await window.desktop.save(data),copy=await window.desktop.copy(data);
+        await window.desktop.chooseSave();const save=await window.desktop.save(data),copy=await window.desktop.copy(data);
         renderer.dispose();image.close();return {save,copy};
       },n?"#ff0000":"#000000");
       assert.ok(!result.save.error&&!result.copy.error);
