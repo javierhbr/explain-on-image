@@ -1,4 +1,4 @@
-# ExplainOnImage
+# ExplainOnImage 1.0.1
 
 Herramienta local de escritorio, en español, para preparar capturas de tutoriales. No necesita cuentas, servicios externos ni conexión a Internet una vez preparada.
 
@@ -28,12 +28,12 @@ Consulta **verification/VERIFICACION.md** y **verification/desktop-results.json*
 
 La distribución de Windows se ha generado en macOS. No hay Windows ni Wine disponibles, por lo que **no se ha ejecutado ni probado el EXE en Windows**, ni se han verificado físicamente varios monitores o DPI mixto. El mapeo de coordenadas sí tiene pruebas matemáticas a 100 %, 125 %, 150 % y 200 %. Las ventanas de otros programas que ya estén en pantalla sí aparecen: forman parte del escritorio capturado.
 
-Límites: PNG/JPG hasta 80 MB, 28 megapíxeles y 12 000 píxeles por lado. Composición hasta 80 megapíxeles. No hay guardado de proyectos editables, solo exportación PNG. El ejecutable no está firmado comercialmente; Windows puede mostrar su aviso habitual para aplicaciones sin firma.
+Límites: PNG/JPG hasta 80 MB, 28 megapíxeles y 12 000 píxeles por lado. Composición hasta 80 megapíxeles y PNG de salida hasta 160 MB. Los JPG deben tener una cabecera de imagen identificable dentro del primer MB. La vista previa y la selección usan buffers limitados al tamaño de ventana; la exportación conserva la resolución nativa. No hay guardado de proyectos editables, solo exportación PNG. El ejecutable no está firmado comercialmente; Windows puede mostrar su aviso habitual para aplicaciones sin firma.
 
 ## Código y desarrollo
 
 Código completo en **app/src/**. Runtime: Electron 45.0.0. Dependencias y versiones fijadas en app/package-lock.json.
 
-Desde app/: npm ci (y node node_modules/electron/install.js si se han desactivado scripts de instalación), npm start, npm test, npm run test:desktop y npm run package. Las pruebas de escritorio usan ratón, teclado, disco y portapapeles reales; los diálogos de selección de archivo devuelven rutas de prueba controladas. Requieren una sesión gráfica.
+Desarrollo con Node.js 22.12 o posterior. Desde app/: npm ci (y node node_modules/electron/install.js si se han desactivado scripts de instalación), npm start, npm test, npm run test:desktop, npm run test:regressions y npm run package. Las pruebas de escritorio usan ratón, teclado, disco y portapapeles reales; los diálogos de selección de archivo devuelven rutas de prueba controladas. Requieren una sesión gráfica.
 
 **ANALISIS_REA.md** detalla el análisis estático de ShareX, lo contrastado por fuente y las inferencias. Todas las referencias están en **references/** y no forman parte de la distribución.

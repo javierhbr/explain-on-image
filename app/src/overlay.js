@@ -1,7 +1,9 @@
 (async () => {
   const data = await window.desktop.overlayImage();
   if (!data || data.error) return window.desktop.overlayFinish(null);
-  document.querySelector("#screen").src = data.data;
+  const url = URL.createObjectURL(new Blob([data.bytes], {type:"image/png"}));
+  document.querySelector("#screen").onload = () => URL.revokeObjectURL(url);
+  document.querySelector("#screen").src = url;
   let start;
   const box = document.querySelector("#selection");
   function area(event) { return { x: Math.min(start.x,event.clientX), y: Math.min(start.y,event.clientY), width: Math.abs(event.clientX-start.x), height: Math.abs(event.clientY-start.y) }; }

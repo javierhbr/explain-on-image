@@ -68,10 +68,10 @@ El uso compartido de los objetos de dibujo favorece la consistencia. Que todos l
 Los hallazgos apoyan separar los datos geométricos de la imagen y generar una composición raster al exportar. Nuestra aplicación implementa esta idea con código propio:
 
 - Coordenadas en píxeles de la imagen original, independientes del zoom.
-- Un único renderizador renderComposition para vista previa, PNG y portapapeles.
+- CompositionRenderer con una rutina compartida para vista previa, PNG y portapapeles.
 - Selección y controles del editor en un lienzo de interacción independiente.
 - Desplazamientos del acabado aplicados mediante una transformación de dibujo; no se mueven temporalmente los objetos.
-- Rectángulos opacos dibujados al final y resultado aplanado en PNG.
+- Fuente saneada con rectángulos opacos antes de cualquier desenfoque o remuestreo, pasada opaca final y resultado aplanado en PNG.
 - Ningún metadato de anotaciones ni imagen original oculta en el archivo exportado.
 
 La identidad entre nuestra vista previa y los archivos exportados está respaldada por nuestras pruebas de píxeles, no por REA ni por ShareX.

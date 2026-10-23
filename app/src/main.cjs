@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, screen, clipboard, nativeImage, dialog, shell, systemPreferences, Menu, ClipboardItem } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen, clipboard, dialog, shell, systemPreferences, Menu, ClipboardItem } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { cropRectangle } = require("./capture-geometry.cjs");
-const { pathToFileURL } = require("node:url");
+const { randomUUID } = require("node:crypto");
+const imagePolicy = import("./image-policy.mjs");
 let mainWindow, overlay, pendingCapture, captureData, lastSaved;
 app.setName("ExplainOnImage");
 if(process.platform === "win32")app.setAppUserModelId("local.explainonimage.desktop");
@@ -16,19 +17,29 @@ function configureWindow(win) {
 function fail(message) { return { error: message }; }
 async function readImage(file) {
   if (!/\.(png|jpe?g)$/i.test(file)) throw Error("Selecciona una imagen PNG o JPG.");
-  const stat = await fs.stat(file);
-  if (stat.size > 80 * 1024 * 1024) throw Error("La imagen supera los 80 MB. Abre una imagen más pequeña.");
-  const image = nativeImage.createFromPath(file);
-  if (image.isEmpty()) throw Error("No se ha podido leer esta imagen.");
-  const { width, height } = image.getSize();
-  if (width * height > 28000000 || width > 12000 || height > 12000) throw Error("La imagen supera el límite de 28 megapíxeles o 12 000 píxeles por lado.");
-  return { data: image.toDataURL(), name: path.basename(file) };
+  const { LIMITS, inspectEncodedImage } = await imagePolicy;
+  const handle = await fs.open(file, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 1 || stat.size > LIMITS.maxInputBytes) throw Error("La imagen está vacía o supera los 80 MB.");
+    const header = Buffer.alloc(Math.min(stat.size, LIMITS.maxHeaderBytes));
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const info = inspectEncodedImage(header.subarray(0, bytesRead));
+    // Bound the allocation even if the selected file grows while it is being read.
+    const data = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < data.length) {
+      const read = await handle.read(data, offset, data.length - offset, offset);
+      if (!read.bytesRead) throw Error("La imagen ha cambiado o está incompleta.");
+      offset += read.bytesRead;
+    }
+    return { bytes: data, mime: info.mime, name: path.basename(file) };
+  } finally { await handle.close(); }
 }
-function decodePNG(data) {
-  if (typeof data !== "string" || !data.startsWith("data:image/png;base64,") || data.length > 180000000) throw Error("La composición no es una imagen PNG válida.");
-  const image = nativeImage.createFromDataURL(data);
-  if (image.isEmpty()) throw Error("No se ha podido generar la imagen.");
-  return image;
+async function exportPNGBytes(data) {
+  const { sanitizeExportPNG } = await imagePolicy;
+  const clean = sanitizeExportPNG(data);
+  return Buffer.from(clean.buffer, clean.byteOffset, clean.byteLength);
 }
 function restore() { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); } }
 function completeCapture(result) {
@@ -86,24 +97,22 @@ handle("image:paste", async () => {
   const item = items.find(i => i.types.includes("image/png")) || items.find(i => i.types.includes("image/jpeg"));
   if (!item) return fail("El portapapeles no contiene ninguna imagen. Copia una imagen e inténtalo de nuevo.");
   const blob = await item.getType(item.types.includes("image/png") ? "image/png" : "image/jpeg");
-  const image = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
-  if (image.isEmpty()) return fail("El portapapeles no contiene ninguna imagen. Copia una imagen e inténtalo de nuevo.");
-  const size = image.getSize();
-  if (size.width * size.height > 28000000 || Math.max(size.width, size.height) > 12000) return fail("La imagen del portapapeles es demasiado grande (máximo 28 MP y 12 000 px por lado).");
-  return { data: image.toDataURL(), name: "Imagen del portapapeles" };
+  const { validateImageBlob } = await imagePolicy;
+  const info = await validateImageBlob(blob);
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), mime: info.mime, name: "Imagen del portapapeles" };
 });
 handle("image:copy", async data => {
-  const image = decodePNG(data);
-  await clipboard.write([new ClipboardItem({ "image/png": new Blob([image.toPNG()], { type: "image/png" }) })]);
+  const bytes = await exportPNGBytes(data);
+  await clipboard.write([new ClipboardItem({ "image/png": new Blob([bytes], { type: "image/png" }) })]);
   return { ok: true };
 });
 handle("image:save", async data => {
-  const image = decodePNG(data);
+  const bytes = await exportPNGBytes(data);
   const result = await dialog.showSaveDialog(mainWindow, { title: "Guardar PNG", defaultPath: `ExplainOnImage-${new Date().toISOString().slice(0, 10)}.png`, filters: [{ name: "Imagen PNG", extensions: ["png"] }] });
   if (result.canceled || !result.filePath) return null;
   const file = /\.png$/i.test(result.filePath) ? result.filePath : result.filePath + ".png";
-  const temporary = file + ".explain-tmp";
-  try { await fs.writeFile(temporary, image.toPNG()); await fs.rename(temporary, file); }
+  const temporary = path.join(path.dirname(file), "." + path.basename(file) + "." + randomUUID() + ".tmp");
+  try { await fs.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 }); await fs.rename(temporary, file); }
   catch (e) { await fs.unlink(temporary).catch(() => {}); throw e; }
   lastSaved = file;
   return { name: path.basename(file), path: file };
@@ -127,7 +136,7 @@ handle("capture:start", async id => {
     if (!source && sources.length === 1 && displays.length === 1) source = sources[0];
     if (!source || source.thumbnail.isEmpty()) throw Error("No se ha podido capturar esta pantalla. Comprueba los permisos de captura del sistema.");
     const screenshot = source.thumbnail;
-    captureData = { image: screenshot, data: screenshot.toDataURL(), width: screenshot.getSize().width, height: screenshot.getSize().height };
+    captureData = { image: screenshot, bytes: screenshot.toPNG(), width: screenshot.getSize().width, height: screenshot.getSize().height };
     const result = new Promise(resolve => { pendingCapture = resolve; });
     overlay = new BrowserWindow({ ...display.bounds, frame: false, resizable: false, movable: false, skipTaskbar: true, alwaysOnTop: true, backgroundColor: "#111111", enableLargerThanScreen: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false } });
     overlay.setBounds(display.bounds);
@@ -139,7 +148,7 @@ handle("capture:start", async id => {
     return await result;
   } catch (e) { completeCapture(null); throw e; }
 });
-handle("overlay:image", () => captureData && ({ data: captureData.data, width: captureData.width, height: captureData.height }), true);
+handle("overlay:image", () => captureData && ({ bytes: captureData.bytes, width: captureData.width, height: captureData.height }), true);
 handle("overlay:finish", rect => {
   if (!rect) { completeCapture(null); return true; }
   if (!captureData || ![rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)) throw Error("Selección no válida.");
@@ -148,6 +157,6 @@ handle("overlay:finish", rect => {
   if (!crop) return false;
   const image = captureData.image.crop(crop);
   const w = crop.width, h = crop.height;
-  completeCapture({ data: image.toDataURL(), name: `Captura · ${w} × ${h} px` });
+  completeCapture({ bytes: image.toPNG(), mime: "image/png", name: `Captura · ${w} × ${h} px` });
   return true;
 }, true);

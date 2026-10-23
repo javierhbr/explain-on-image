@@ -1,12 +1,30 @@
-# Verificación de ExplainOnImage
+# Verificación de ExplainOnImage 1.0.1
 
-Fecha: 2026-10-23T15:38:05.815Z. Plataforma: macOS arm64.
+Entorno: macOS arm64, Electron 45.0.0. Informe actualizado tras corregir las observaciones de rendimiento y seguridad.
 
 ## Resultado
 
-10 pruebas automáticas de geometría, historial, preferencias y mapeo de captura: **10 correctas**.
+- 20 pruebas de unidad correctas: geometría, historial, límites de entrada, PNG/JPEG, limpieza de metadatos y agrupación de frames.
+- 22 pruebas de escritorio correctas; 1 bloqueada por el permiso de captura; 0 fallos.
+- 7 regresiones de privacidad y recursos correctas.
+- npm audit: 0 vulnerabilidades conocidas después de actualizar @electron/packager a 20.3.0.
 
-Pruebas de escritorio: **22 correctas, 1 bloqueada, 0 fallos**. Se ejecutaron con Electron 45 y Playwright, sobre ventanas reales.
+## Correcciones verificadas
+
+| Observación | Corrección y evidencia |
+|---|---|
+| Desenfoque alrededor de ocultaciones | La fuente se sanea antes de filtros y remuestreo. Cambiar solo los píxeles cubiertos produce 0 canales distintos; PNG y píxeles del portapapeles son idénticos. |
+| Redibujado repetido | FrameScheduler agrupa 120 peticiones en un frame. En 24 dibujos de prueba solo se asignan las 2 dimensiones iniciales del canvas. Tres desenfoques se calculan 3 veces en total, no en cada dibujo. |
+| Memoria de vista y selección | Composición vertical de 79 067 664 píxeles con vista y selección de 2 887 416 píxeles cada una en este equipo. Zoom no aumenta esas superficies. |
+| Copias de exportación | PNG asíncrono, IPC binario, sin decodificación/recompresión en main. La superficie de exportación se libera al terminar; activeExportPixels vuelve a 0. |
+| Entradas grandes antes de decodificar | Preflight de bytes y cabeceras. Una cabecera PNG de 20 000 × 20 000 se rechaza con 0 llamadas al decodificador nativo. El tamaño del blob se comprueba antes de leerlo. |
+| Dependencias de empaquetado | Se eliminó extract-zip 2.0.1. Packager 20.3.0 usa la implementación interna actual; auditoría sin avisos conocidos. |
+
+Presupuesto de caché de desenfoques: 8 388 608 píxeles (~32 MiB RGBA) entre todos los efectos activos. En la prueba de tres regiones grandes se utilizaron 8 383 968 píxeles, sin recalcular los efectos al mover una flecha.
+
+Estas cifras de superficies y contadores son observaciones de los tests, no mediciones de pico de RSS ni de porcentaje de CPU. Exportar a resolución nativa sigue necesitando memoria proporcional al tamaño de salida y el sistema puede convertir imágenes para el portapapeles.
+
+## Flujo de escritorio
 
 | Prueba | Resultado |
 |---|---|
@@ -34,35 +52,23 @@ Pruebas de escritorio: **22 correctas, 1 bloqueada, 0 fallos**. Se ejecutaron co
 | Preferencias guardadas en disco | Correcta |
 | Preferencias restauradas al reiniciar la aplicación | Correcta |
 
-## Alcance de las comprobaciones
+El PNG de la batería principal tiene 1584 × 891 píxeles. Archivo y portapapeles se compararon píxel a píxel con la composición. El PNG solo contiene IHDR, IDAT e IEND. Se ejercitaron ratón, teclado, importación PNG/JPG, texto, movimiento, redimensionado, historial, acabado, firma, zoom y restauración de preferencias tras reiniciar.
 
-- Los números, flechas, rectángulos, movimientos, cambios de tamaño y texto se colocaron con eventos reales de ratón y teclado en el editor.
-- Los diálogos de selección y guardado devolvieron rutas controladas, sin recorrer manualmente el explorador de archivos. La lectura y escritura de PNG/JPG fueron reales.
-- PNG guardado y portapapeles del sistema: resolución 1584 × 891 y comparación píxel a píxel contra el renderizador de la vista previa.
-- Se comparó la exportación antes/después de cambiar zoom y tamaño de ventana: mismos píxeles y mismas coordenadas.
-- Se comprobó el rectángulo oculto en todo un bloque interior: píxeles completamente opacos, color uniforme. El PNG solo incluyó IHDR, IDAT e IEND; sin metadatos de texto o EXIF.
-- El PNG se abrió en Vista Previa. Su ventana y contenido se comprobaron además mediante la herramienta de escritorio; no fue solo una petición de apertura.
-- Las preferencias se leyeron del disco y se comprobó su restauración en una segunda ejecución.
-- Las fuentes empaquetadas en ambos app.asar se compararon con el código final. El EXE tiene cabecera PE x64 (máquina 0x8664). Esto no equivale a ejecutar Windows.
+Los diálogos de archivo usan rutas controladas en las pruebas; lectura, escritura y portapapeles son reales. El PNG se abrió en el visor externo durante la batería.
 
-## Captura real: intento bloqueado
+## Límites pendientes
 
-Se creó una ventana de prueba independiente, con fondo conocido y datos ficticios, y se pulsó Capturar zona. El sistema informó que el permiso de grabación de pantalla para Electron está denegado. La aplicación mostró el aviso y recuperó su ventana. No se obtuvo una captura real satisfactoria y no se alcanzó el selector de zona.
+La captura real se intentó sobre una ventana separada con datos ficticios. macOS denegó la grabación de pantalla y no se alcanzó el selector. La muestra sintética no cuenta como captura real. Selección, cancelación y exclusión de ventana/overlay quedan pendientes de prueba real.
 
-Por tanto, quedan sin verificar mediante captura real: selección de área, exclusión de nuestra ventana y overlay, cancelación con Escape, resolución adquirida y mapeo físico en pantallas conectadas. No se presenta la imagen sintética como sustituto.
+No hay Windows ni Wine en este entorno. Se genera el paquete Windows x64 y se comprueba su contenido, pero no se ha ejecutado allí. Varios monitores físicos y DPI mixto siguen pendientes. El mapeo matemático a 100 %, 125 %, 150 % y 200 % sí pasa.
 
-Las pruebas matemáticas de conversión de selección normalizada a píxeles sí pasan a 100 %, 125 %, 150 % y 200 %, incluyendo límites y selecciones inválidas. No demuestran el comportamiento del sistema de captura de Windows.
+## Evidencia
 
-## Pendiente de un equipo Windows
+- desktop-results.json: batería completa de escritorio.
+- render-regressions.json: privacidad, caché y superficies.
+- npm-audit.json: auditoría del grafo instalado.
+- package-smoke.json y 03-aplicacion-empaquetada.png: comprobación del paquete macOS.
+- resultado-final.png: exportación normal; privacy-a.png/privacy-b.png: exportaciones idénticas ante cambios bajo máscara.
+- SHA256.json: huellas del ZIP, ejecutable y PNG de ejemplo.
 
-Ejecución del EXE, captura real, portapapeles y diálogos de Windows, varios monitores físicos y configuraciones de DPI mixto. Este host es macOS y no dispone de Windows ni Wine.
-
-## Archivos de evidencia
-
-- desktop-results.json: resultados de la última batería.
-- 01-inicio.png y 02-editor-completo.png: interfaz real.
-- resultado-final.png: PNG compuesto y aplanado.
-- ejemplo-datos-ficticios.png y ejemplo.jpg: entradas de prueba, etiquetadas como ficticias.
-- 03-aplicacion-empaquetada.png: se genera al comprobar el arranque del paquete macOS.
-
-Las pruebas se ejecutaron varias veces durante las correcciones. Este informe describe el resultado final; los fallos intermedios corregidos no se cuentan como funciones verificadas hasta pasar.
+Uncle Lead y Uncle Senior revisaron las correcciones y no encontraron un nuevo bloqueo concreto en sus ámbitos. Su revisión fue estática y con pruebas acotadas; no sustituye pruebas de Windows ni una auditoría exhaustiva.
