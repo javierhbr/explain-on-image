@@ -1,0 +1,30 @@
+# Dependencies and build output
+node_modules/
+/dist/
+/ExplainOnImage.app/
+# The macOS launcher is a generated symlink.
+/ExplainOnImage.app
+
+# Downloaded third-party reference material (keep REA evidence).
+/references/sharex-portable/
+/references/source/
+/references/*.zip
+
+# Generated test images, results, hashes, and local profiles.
+/verification/*
+!/verification/VERIFICACION.md
+/verification-profile/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
