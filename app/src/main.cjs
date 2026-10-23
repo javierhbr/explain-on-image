@@ -65,7 +65,7 @@ app.whenReady().then(() => {
       { label: "Cerrar", role: "close" }
     ] }
   ]) : null);
-  mainWindow = new BrowserWindow({ width: 1460, height: 940, minWidth: 1000, minHeight: 680, title: "ExplainOnImage", backgroundColor: "#f4f3ef", webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  mainWindow = new BrowserWindow({ width: 1460, height: 940, minWidth: 1000, minHeight: 680, title: "ExplainOnImage", backgroundColor: "#f4f3ef", icon: path.join(__dirname, "../assets/app-icon.png"), webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   configureWindow(mainWindow);
   mainWindow.loadFile(path.join(__dirname, "index.html"));
   mainWindow.on("closed", () => { if (pendingCapture) completeCapture(null); mainWindow = null; });

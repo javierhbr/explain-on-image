@@ -72,3 +72,10 @@ No hay Windows ni Wine en este entorno. Se genera el paquete Windows x64 y se co
 - SHA256.json: huellas del ZIP, ejecutable y PNG de ejemplo.
 
 Uncle Lead y Uncle Senior revisaron las correcciones y no encontraron un nuevo bloqueo concreto en sus ámbitos. Su revisión fue estática y con pruebas acotadas; no sustituye pruebas de Windows ni una auditoría exhaustiva.
+
+## Icono de la aplicación — 23/10/2026
+
+- Ilustración original generada y exportada a PNG de 1024 × 1024, ICO con siete resoluciones e ICNS.
+- Verificados los siete recursos del ICO dentro del ejecutable de Windows y la coincidencia exacta del ICNS con el recurso del paquete macOS. No se ejecutó Windows.
+- Arranque del paquete macOS con Playwright: icono de cabecera cargado a 1024 × 1024, sin errores del renderizador. Captura: icon-preview.png; resultados: icon-smoke.json.
+- Pruebas unitarias existentes superadas; ZIP portátil reconstruido y comprobado con testzip. Aplicación reabierta.
