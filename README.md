@@ -39,10 +39,27 @@ This writes two builds to `dist/` at the repository root:
 
 After building, you can also open the app with the launchers in the repository root:
 
-- macOS: double-click `Iniciar ExplainOnImage.command`
-- Windows: double-click `Iniciar ExplainOnImage Windows.cmd`
+- macOS: double-click `StartExplainOnImage.command`
+- Windows: double-click `StartExplainOnImageWindows.cmd`
 
 The builds are not code-signed or notarized. On macOS, if Gatekeeper blocks the first launch, right-click the app and choose **Open**. On Windows, SmartScreen may show its usual warning for unsigned apps.
+
+## Open the app with a shell alias (macOS)
+
+If you can't install the app into `/Applications` (for example, no admin rights), add an alias to your shell that opens the built app straight from `dist/`. Run this from the repository root after building:
+
+```bash
+echo "alias explainonimage='open \"$(pwd)/dist/ExplainOnImage-darwin-arm64/ExplainOnImage.app\"'" >> ~/.zshrc
+source ~/.zshrc
+```
+
+Then start the app from any terminal with:
+
+```bash
+explainonimage
+```
+
+The alias stores the absolute path, so update it if you move the repository. If you use bash, write to `~/.bash_profile` instead of `~/.zshrc`.
 
 ## macOS screen recording permission
 
@@ -66,4 +83,4 @@ Desktop tests need a graphical session and should be run while you are not using
 
 - `LEEME.md` — user guide (Spanish)
 - `app/DESIGN.md` — design notes
-- `verification/VERIFICACION.md` — verification results and known limits
+- `verification/VERIFICATION.md` — verification results and known limits

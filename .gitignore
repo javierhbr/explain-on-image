@@ -12,7 +12,7 @@ node_modules/
 
 # Generated test images, results, hashes, and local profiles.
 /verification/*
-!/verification/VERIFICACION.md
+!/verification/VERIFICATION.md
 /verification-profile/
 coverage/
 *.log

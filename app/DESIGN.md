@@ -32,7 +32,7 @@ Renderer aislado y sandbox, Node desactivado, CSP local, navegación y nuevas ve
 
 ## Validación
 
-Pruebas de geometría, historial, parser sin decodificación y agrupación de frames; Electron + Playwright para edición y salida real; regresiones de privacidad con desenfoques, límite de caché, composición vertical de 79 MP y liberación de exportación. El informe verification/VERIFICACION.md distingue resultados observados de estimaciones.
+Pruebas de geometría, historial, parser sin decodificación y agrupación de frames; Electron + Playwright para edición y salida real; regresiones de privacidad con desenfoques, límite de caché, composición vertical de 79 MP y liberación de exportación. El informe verification/VERIFICATION.md distingue resultados observados de estimaciones.
 
 La captura real continúa bloqueada por el permiso de grabación de pantalla del host. Windows, varios monitores físicos y DPI mixto siguen pendientes de verificación en un equipo adecuado.
 
