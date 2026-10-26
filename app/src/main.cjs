@@ -96,8 +96,11 @@ handle("preferences:set", async value => {
   return true;
 });
 handle("image:open", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { title: "Open image", filters: [{ name: "PNG and JPG images", extensions: ["png", "jpg", "jpeg"] }], properties: ["openFile"] });
-  return result.canceled ? null : readImage(result.filePaths[0]);
+  const result = await dialog.showOpenDialog(mainWindow, { title: "Open image", filters: [{ name: "PNG and JPG images", extensions: ["png", "jpg", "jpeg"] }], properties: ["openFile", "multiSelections"] });
+  if (result.canceled) return null;
+  const images = [];
+  for (const file of result.filePaths.slice(0, 8)) images.push(await readImage(file));
+  return images;
 });
 handle("image:paste", async () => {
   const items = await clipboard.read();

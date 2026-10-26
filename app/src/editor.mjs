@@ -9,10 +9,13 @@ const canvas=$("#composition"),interaction=$("#interaction"),stage=$("#stage"),v
 let image=null,annotations=[],finish={...defaults},style={...defaultStyle},history=new History({annotations,finish,style});
 let tool="select",selected=null,drag=null,zoom=1,fitMode=true,composition=null,prefsTimer,toastTimer,textPoint=null,textEditing=null,busy=false;
 const renderer=new CompositionRenderer();
+// Open documents. The module variables above hold the live state of the active tab; saveTab/loadTab swap them.
+let tabs=[],active=null;const MAX_TABS=8;
 let previewDirty=false;
 const frame=new FrameScheduler(paintPreview);
 const hints={select:"Drag to move · Use the corners to resize · Delete to remove",number:"Click to place the next number.",arrow:"Drag from the start to the tip of the arrow.",rectangle:"Drag to frame an element.",text:"Click to write · Double-click a text to edit it.",redact:"Cover the whole value with an opaque rectangle. It is flattened on export.",blur:"Visual effect. To protect sensitive data, use “Redact”."};
-function state(){return {annotations,finish,style};}
+// Undo covers the active tab's annotations; finish and style are shared by all tabs.
+function state(){return {annotations};}
 function persist(){clearTimeout(prefsTimer);prefsTimer=setTimeout(()=>window.desktop.savePreferences({finish,style}).then(r=>{if(r?.error)toast("Could not save preferences.",true);}),180);}
 function commit(){history.push(state());persist();sync();}
 function toast(message,error=false){clearTimeout(toastTimer);const el=$("#toast");el.textContent=message;el.classList.toggle("error",error);el.hidden=false;toastTimer=setTimeout(()=>el.hidden=true,error?6500:3200);}
@@ -74,15 +77,34 @@ function render(){
   }
   requestPaint(true);
 }
-function undo(){if(!history.canUndo)return;({annotations,finish,style}=history.undo());selected=null;drag=null;render();persist();}
-function redo(){if(!history.canRedo)return;({annotations,finish,style}=history.redo());selected=null;drag=null;render();persist();}
+function undo(){if(!history.canUndo)return;({annotations}=history.undo());selected=null;drag=null;render();}
+function redo(){if(!history.canRedo)return;({annotations}=history.redo());selected=null;drag=null;render();}
 function setTool(value){tool=value;if(value!=="select")selected=null;sync();drawSelection();}
 function deleteSelected(){if(!selected)return;annotations=annotations.filter(a=>a.id!==selected);selected=null;commit();render();}
 function setZoom(value){fitMode=false;zoom=clamp(value,.03,4);computeZoom();drawSelection();}
 function changeFinish(patch,record=true){const old=finish;finish={...finish,...patch};if(image){const l=layout(image.width,image.height,finish);if(!outputFits(l.outputWidth,l.outputHeight,finish.scale)){toast(finish.scale>1?"Exports above 100 % are limited to 40 megapixels. Choose a smaller size.":"This format exceeds 80 megapixels. Use the automatic format, a smaller size or a smaller image.",true);finish=old;sync();return false;}}render();if(record)commit();return true;}
-async function confirmReplace(){if(!annotations.length)return true;const d=$("#replace-dialog");d.showModal();return new Promise(resolve=>{const end=value=>{d.close();resolve(value);};$("#replace-ok").onclick=()=>end(true);$("#replace-cancel").onclick=()=>end(false);d.oncancel=()=>resolve(false);});}
+async function confirmClose(){const d=$("#close-tab-dialog");d.showModal();return new Promise(resolve=>{const end=value=>{d.close();resolve(value);};$("#close-tab-ok").onclick=()=>end(true);$("#close-tab-cancel").onclick=()=>end(false);d.oncancel=()=>resolve(false);});}
+function saveTab(){if(active)Object.assign(active,{image,annotations,history,selected,zoom,fitMode,composition,migueBackup});}
+function loadTab(tab){active=tab;({image,annotations,history,selected,zoom,fitMode,migueBackup}=tab||{image:null,annotations:[],history:new History({annotations:[]}),selected:null,zoom:1,fitMode:true,migueBackup:null});composition=null;drag=null;textEditing=null;textPoint=null;renderer.setImage(image);if(image&&fitFinish(image))setTimeout(()=>toast("Format and size adjusted to keep this image within the export limit."));}
+// The shared finish may have been set on another tab, so recheck it against this image.
+function fitFinish(img){const fits=f=>{const l=layout(img.width,img.height,f);return outputFits(l.outputWidth,l.outputHeight,f.scale);},before=finish;if(!fits(finish))finish={...finish,ratio:"auto"};for(let i=SCALES.indexOf(finish.scale);i>0&&!fits(finish);i--)finish={...finish,scale:SCALES[i-1]};return finish!==before;}
+function showDocument(){const has=!!image;$("#empty").hidden=has;stage.hidden=!has;canvas.hidden=!has;interaction.hidden=!has;$("#saved").hidden=true;$("#document-name").textContent=active?.name||"Your next tutorial starts here";if(!has)$("#dimensions").textContent="No image";renderTabs();render();}
+function renderTabs(){
+  $("#tabs").hidden=!tabs.length;$("#document-label").hidden=!!tabs.length;
+  $("#tabs").replaceChildren(...tabs.map(t=>{const el=document.createElement("div"),b=document.createElement("button"),x=document.createElement("button");el.className="tab";el.setAttribute("role","presentation");el.classList.toggle("active",t===active);b.setAttribute("role","tab");b.setAttribute("aria-selected",t===active);b.textContent=b.title=t.name;b.onclick=()=>activate(t);x.className="tab-close";x.textContent="×";x.title="Close tab";x.setAttribute("aria-label","Close tab");x.onclick=()=>closeTab(t);el.append(b,x);return el;}));
+}
+function activate(tab){if(!tab||tab===active||busy)return;finishDrag();saveTab();loadTab(tab);showDocument();}
+function cycleTab(step){if(tabs.length>1)activate(tabs[(tabs.indexOf(active)+step+tabs.length)%tabs.length]);}
+async function closeTab(tab){
+  if(busy)return;if(tab===active)finishDrag();
+  if((tab===active?annotations:tab.annotations).length&&!await confirmClose())return;
+  const i=tabs.indexOf(tab);if(i<0)return;tabs.splice(i,1);
+  if(tab===active){active=null;loadTab(tabs[Math.min(i,tabs.length-1)]||null);showDocument();}else renderTabs();
+  tab.image.close?.();
+}
 export async function loadImage(result){
   if(!valid(result))return;
+  if(tabs.length>=MAX_TABS){toast("Close a tab to open another image (8 max).",true);return;}
   let next;
   try {
     if(!(result.bytes instanceof Uint8Array))throw Error("The image does not contain valid data.");
@@ -91,15 +113,9 @@ export async function loadImage(result){
     next=await createImageBitmap(blob);
     if(next.width*next.height>LIMITS.maxInputPixels||Math.max(next.width,next.height)>LIMITS.maxInputSide){next.close();throw Error("The image exceeds the 28 MP or 12,000 pixels per side limit.");}
   }catch(e){toast(e.message||"Could not open the image.",true);return;}
-  const previous=image;renderer.setImage(next);image=next;previous?.close?.();
-  annotations=[];selected=null;drag=null;fitMode=true;tool="select";composition=null;
-  const fits=f=>{const l=layout(next.width,next.height,f);return outputFits(l.outputWidth,l.outputHeight,f.scale);},before=finish;
-  if(!fits(finish))finish={...finish,ratio:"auto"};
-  for(let i=SCALES.indexOf(finish.scale);i>0&&!fits(finish);i--)finish={...finish,scale:SCALES[i-1]};
-  if(finish!==before)setTimeout(()=>toast("Format and size adjusted to keep this image within the export limit."));
-  canvas.hidden=false;interaction.hidden=false;
-  history=new History(state());$("#empty").hidden=true;stage.hidden=false;$("#saved").hidden=true;
-  $("#document-name").textContent=result.name||"Untitled image";render();
+  finishDrag();saveTab();const tab={id:crypto.randomUUID(),name:result.name||"Untitled image",image:next,annotations:[],history:null,selected:null,zoom:1,fitMode:true,composition:null,migueBackup:null};
+  tabs.push(tab);loadTab(tab);tool="select";
+  history=new History(state());showDocument();
 }
 async function capture(){
   const displays=await window.desktop.displays();if(!valid(displays))return;
@@ -112,14 +128,14 @@ async function capture(){
   const result=await window.desktop.capture(id);if(result)await loadImage(result);
 }
 for(const button of $$("[data-action]"))button.addEventListener("click",async()=>{
-  if(busy)return;busy=true;sync();try{if(!await confirmReplace())return;const action=button.dataset.action;if(action==="capture")await capture();if(action==="open")await loadImage(await window.desktop.openImage());if(action==="paste")await loadImage(await window.desktop.pasteImage());}catch(e){toast("Could not open the image: "+e.message,true);}finally{busy=false;sync();}
+  if(busy)return;busy=true;sync();try{const action=button.dataset.action;if(action==="capture")await capture();if(action==="open"){const r=await window.desktop.openImage();for(const item of Array.isArray(r)?r:[r])await loadImage(item);}if(action==="paste")await loadImage(await window.desktop.pasteImage());}catch(e){toast("Could not open the image: "+e.message,true);}finally{busy=false;sync();}
 });
 for(const b of $$("[data-tool]"))b.onclick=()=>setTool(b.dataset.tool);
 $("#undo").onclick=undo;$("#redo").onclick=redo;$("#delete").onclick=deleteSelected;
 $("#zoom-in").onclick=()=>setZoom(zoom*1.25);$("#zoom-out").onclick=()=>setZoom(zoom/1.25);$("#zoom-value").onclick=()=>setZoom(1);$("#fit").onclick=()=>{fitMode=true;computeZoom();drawSelection();};
 new ResizeObserver(()=>{computeZoom();drawSelection();}).observe(viewport);
 viewport.addEventListener("scroll",()=>requestPaint(true));
-window.addEventListener("beforeunload",()=>{frame.dispose();renderer.dispose();image?.close?.();});
+window.addEventListener("beforeunload",()=>{frame.dispose();renderer.dispose();for(const t of tabs)t.image.close?.();});
 for(const key of ["margin","radius"]){$("#"+key).oninput=e=>changeFinish({[key]:Number(e.target.value)},false);$("#"+key).onchange=()=>commit();}
 for(const key of ["shadow","signature"])$("#"+key).onchange=e=>changeFinish({[key]:e.target.checked});
 $("#signature-text").oninput=e=>changeFinish({signatureText:cleanSignature(e.target.value)},false);$("#signature-text").onchange=()=>commit();
@@ -237,11 +253,13 @@ $("#toggle-finishing").onclick=()=>collapseFinishing(!$(".finishing").classList.
 collapseFinishing(localStorage.getItem("finishingCollapsed")==="1");
 $("#doctor").onclick=()=>{$("#doctor-dialog").showModal();runDoctor();};
 $("#doctor-rerun").onclick=runDoctor;$("#doctor-close").onclick=()=>$("#doctor-dialog").close();
-$("#doctor-settings").onclick=async()=>valid(await window.desktop.openPrivacySettings());$("#doctor-relaunch").onclick=async()=>{if(annotations.length&&!confirm("Restart now? Annotations that are not saved or copied will be lost."))return;clearTimeout(prefsTimer);await window.desktop.savePreferences({finish,style});window.desktop.relaunch();};
+$("#doctor-settings").onclick=async()=>valid(await window.desktop.openPrivacySettings());$("#doctor-relaunch").onclick=async()=>{saveTab();if(tabs.some(t=>t.annotations.length)&&!confirm("Restart now? Annotations that are not saved or copied will be lost."))return;clearTimeout(prefsTimer);await window.desktop.savePreferences({finish,style});window.desktop.relaunch();};
 $("#open-saved").onclick=async()=>{valid((await window.desktop.openSaved())||{ok:true});};$("#reveal-saved").onclick=async()=>{valid((await window.desktop.revealSaved())||{ok:true});};$("#close-saved").onclick=()=>$("#saved").hidden=true;
 document.addEventListener("keydown",async event=>{
   if($("dialog[open]")||["INPUT","TEXTAREA","SELECT"].includes(document.activeElement?.tagName))return;
   const key=event.key.toLowerCase(),mod=event.ctrlKey||event.metaKey;
+  if(event.ctrlKey&&event.key==="Tab"){event.preventDefault();cycleTab(event.shiftKey?-1:1);return;}
+  if(mod&&/^[1-8]$/.test(event.key)){event.preventDefault();activate(tabs[Number(event.key)-1]);return;}
   if(mod&&key==="z"){event.preventDefault();event.shiftKey?redo():undo();return;}
   if(mod&&key==="y"){event.preventDefault();redo();return;}
   if(mod&&key==="0"){event.preventDefault();fitMode=true;computeZoom();drawSelection();return;}
@@ -255,6 +273,6 @@ const preferences=await window.desktop.preferences();if(preferences&&!preference
 // The account name is only a suggestion: shown as placeholder, used if the signature is on and left empty, never saved.
 const userName=await window.desktop.username();if(typeof userName==="string"){renderer.signatureFallback=cleanSignature(userName);$("#signature-text").placeholder=renderer.signatureFallback||"Signature text";}sync();
 // Exported module functions are also used by the desktop integration tests; no test IPC is shipped.
-export function snapshot(){return clone({annotations,finish,style,zoom,composition,selected,tool});}
+export function snapshot(){return {...clone({annotations,finish,style,zoom,composition,selected,tool}),tabs:tabs.length,active:tabs.indexOf(active)};}
 export async function exportData(){if(!image)return null;const blob=await renderer.exportPNG(annotations,finish);return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);});}
 export function renderDiagnostics(){return {...renderer.diagnostics(),previewPixels:canvas.width*canvas.height,selectionPixels:interaction.width*interaction.height};}
