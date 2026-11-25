@@ -1,5 +1,11 @@
 # ExplainOnImage
 
+## Add images to a canvas
+
+Use **Add images** to import one or more PNG or JPG files, paste an image with **Paste image** or Ctrl/Cmd+V, or drop image files into the window. The first image sets the canvas size. Additional images appear on that canvas; choose **Select** to drag them into place, resize them from a corner, or remove one with Delete. Copy and Save include every placed image.
+
+Choose **Text** and click the image to type directly on the canvas. Press Enter or click away to save; press Escape to cancel. Double-click existing text to edit it in place.
+
 Offline desktop tool for capturing screenshots and annotating them for tutorials (numbers, arrows, rectangles, text, redaction). Built with Electron. No accounts, external services or network connection are needed once installed.
 
 ## Requirements

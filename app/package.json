@@ -1,7 +1,7 @@
 {
   "name": "explain-on-image",
   "productName": "ExplainOnImage",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Capturas y anotaciones para tutoriales, sin conexión",
   "main": "src/main.cjs",
   "author": "ExplainOnImage",

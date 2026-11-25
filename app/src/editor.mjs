@@ -5,15 +5,16 @@ import { validateImageBlob, outputFits, LIMITS } from "./image-policy.mjs";
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const icons={collapse:"m6 6 6 6-6 6 M12 6l6 6-6 6",capture:"M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M8 8h8v8H8z",image:"M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z M3 16l6-6 5 5 3-3 4 4 M16 7h.01",paste:"M9 4H5v17h14V4h-4 M9 2h6v4H9z M8 11h8 M8 15h5",copy:"M8 8h12v13H8z M16 8V3H3v13h5",download:"M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5",cursor:"m5 3 14 10-7 1-3 7z",arrow:"M4 20 20 4 M9 4h11v11",rectangle:"M3 5h18v14H3z",text:"M4 4h16 M12 4v17 M8 21h8",lock:"M5 10h14v11H5z M8 10V6a4 4 0 0 1 8 0v4 M12 14v3",blur:"M4 5h2m4 0h2m4 0h2M6 10h2m4 0h2m4 0h2M4 15h2m4 0h2m4 0h2M6 20h2m4 0h2m4 0h2",undo:"M8 4 3 9l5 5 M3 9h11a6 6 0 0 1 0 12",redo:"m16 4 5 5-5 5 M21 9H10a6 6 0 0 0 0 12",sliders:"M4 7h16M4 17h16 M8 4v6 M16 14v6",spark:"m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z",fit:"M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5",trash:"M3 6h18 M8 6V3h8v3 M6 6l1 15h10l1-15 M10 10v7m4-7v7",check:"m4 12 5 5L20 6"};
 for(const i of $$("[data-icon]"))i.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[i.dataset.icon]||icons.rectangle}"/></svg>`;
-const canvas=$("#composition"),interaction=$("#interaction"),stage=$("#stage"),viewport=$("#viewport");
+const canvas=$("#composition"),interaction=$("#interaction"),stage=$("#stage"),viewport=$("#viewport"),textEditor=$("#canvas-text-editor");
 let image=null,annotations=[],finish={...defaults},style={...defaultStyle},history=new History({annotations,finish,style});
+let imageLayers=new Map();
 let tool="select",selected=null,drag=null,zoom=1,fitMode=true,composition=null,prefsTimer,toastTimer,textPoint=null,textEditing=null,busy=false;
 const renderer=new CompositionRenderer();
 // Open documents. The module variables above hold the live state of the active tab; saveTab/loadTab swap them.
 let tabs=[],active=null;const MAX_TABS=8;
 let previewDirty=false;
 const frame=new FrameScheduler(paintPreview);
-const hints={select:"Drag to move · Use the corners to resize · Delete to remove",number:"Click to place the next number.",arrow:"Drag from the start to the tip of the arrow.",rectangle:"Drag to frame an element.",text:"Click to write · Double-click a text to edit it.",redact:"Cover the whole value with an opaque rectangle. It is flattened on export.",blur:"Visual effect. To protect sensitive data, use “Redact”."};
+const hints={select:"Drag to move images and annotations · Use the corners to resize · Delete to remove",number:"Click to place the next number.",arrow:"Drag from the start to the tip of the arrow.",rectangle:"Drag to frame an element.",text:"Click to write · Double-click a text to edit it.",redact:"Cover the whole value with an opaque rectangle. It is flattened on export.",blur:"Visual effect. To protect sensitive data, use “Redact”."};
 // Undo covers the active tab's annotations; finish and style are shared by all tabs.
 function state(){return {annotations};}
 function persist(){clearTimeout(prefsTimer);prefsTimer=setTimeout(()=>window.desktop.savePreferences({finish,style}).then(r=>{if(r?.error)toast("Could not save preferences.",true);}),180);}
@@ -48,6 +49,7 @@ function computeZoom(){
   const width=composition.width*zoom+"px",height=composition.height*zoom+"px";
   if(stage.style.width!==width)stage.style.width=width;
   if(stage.style.height!==height)stage.style.height=height;
+  positionTextEditor();
   sync();requestPaint(true);
 }
 function camera(){
@@ -60,7 +62,7 @@ function paintPreview(){
   if(!image||!composition)return;
   const view=camera();
   for(const c of [canvas,interaction]){c.style.width=view.width+"px";c.style.height=view.height+"px";}
-  if(previewDirty){renderer.renderPreview(canvas,annotations,finish,composition,view);previewDirty=false;}
+  if(previewDirty){renderer.renderPreview(canvas,textEditing?annotations.filter(a=>a.id!==textEditing):annotations,finish,composition,view);previewDirty=false;}
   const width=Math.max(1,Math.ceil(view.width*view.dpr)),height=Math.max(1,Math.ceil(view.height*view.dpr));
   if(interaction.width!==width)interaction.width=width;
   if(interaction.height!==height)interaction.height=height;
@@ -84,8 +86,8 @@ function deleteSelected(){if(!selected)return;annotations=annotations.filter(a=>
 function setZoom(value){fitMode=false;zoom=clamp(value,.03,4);computeZoom();drawSelection();}
 function changeFinish(patch,record=true){const old=finish;finish={...finish,...patch};if(image){const l=layout(image.width,image.height,finish);if(!outputFits(l.outputWidth,l.outputHeight,finish.scale)){toast(finish.scale>1?"Exports above 100 % are limited to 40 megapixels. Choose a smaller size.":"This format exceeds 80 megapixels. Use the automatic format, a smaller size or a smaller image.",true);finish=old;sync();return false;}}render();if(record)commit();return true;}
 async function confirmClose(){const d=$("#close-tab-dialog");d.showModal();return new Promise(resolve=>{const end=value=>{d.close();resolve(value);};$("#close-tab-ok").onclick=()=>end(true);$("#close-tab-cancel").onclick=()=>end(false);d.oncancel=()=>resolve(false);});}
-function saveTab(){if(active)Object.assign(active,{image,annotations,history,selected,zoom,fitMode,composition,migueBackup});}
-function loadTab(tab){active=tab;({image,annotations,history,selected,zoom,fitMode,migueBackup}=tab||{image:null,annotations:[],history:new History({annotations:[]}),selected:null,zoom:1,fitMode:true,migueBackup:null});composition=null;drag=null;textEditing=null;textPoint=null;renderer.setImage(image);if(image&&fitFinish(image))setTimeout(()=>toast("Format and size adjusted to keep this image within the export limit."));}
+function saveTab(){finishTextEditor();if(active)Object.assign(active,{image,annotations,imageLayers,history,selected,zoom,fitMode,composition,migueBackup});}
+function loadTab(tab){active=tab;({image,annotations,imageLayers,history,selected,zoom,fitMode,migueBackup}=tab||{image:null,annotations:[],imageLayers:new Map(),history:new History({annotations:[]}),selected:null,zoom:1,fitMode:true,migueBackup:null});composition=null;drag=null;textEditing=null;textPoint=null;textEditor.hidden=true;renderer.setImage(image);renderer.setLayers(imageLayers);if(image&&fitFinish(image))setTimeout(()=>toast("Format and size adjusted to keep this image within the export limit."));}
 // The shared finish may have been set on another tab, so recheck it against this image.
 function fitFinish(img){const fits=f=>{const l=layout(img.width,img.height,f);return outputFits(l.outputWidth,l.outputHeight,f.scale);},before=finish;if(!fits(finish))finish={...finish,ratio:"auto"};for(let i=SCALES.indexOf(finish.scale);i>0&&!fits(finish);i--)finish={...finish,scale:SCALES[i-1]};return finish!==before;}
 function showDocument(){const has=!!image;$("#empty").hidden=has;stage.hidden=!has;canvas.hidden=!has;interaction.hidden=!has;$("#saved").hidden=true;$("#document-name").textContent=active?.name||"Your next tutorial starts here";if(!has)$("#dimensions").textContent="No image";renderTabs();render();}
@@ -96,24 +98,41 @@ function renderTabs(){
 function activate(tab){if(!tab||tab===active||busy)return;finishDrag();saveTab();loadTab(tab);showDocument();}
 function cycleTab(step){if(tabs.length>1)activate(tabs[(tabs.indexOf(active)+step+tabs.length)%tabs.length]);}
 async function closeTab(tab){
-  if(busy)return;if(tab===active)finishDrag();
+  if(busy)return;if(tab===active){finishTextEditor();finishDrag();}
   if((tab===active?annotations:tab.annotations).length&&!await confirmClose())return;
   const i=tabs.indexOf(tab);if(i<0)return;tabs.splice(i,1);
   if(tab===active){active=null;loadTab(tabs[Math.min(i,tabs.length-1)]||null);showDocument();}else renderTabs();
   tab.image.close?.();
+  for(const bitmap of tab.imageLayers.values())bitmap.close?.();
 }
-export async function loadImage(result){
+async function decodeImage(result){
+  if(!(result.bytes instanceof Uint8Array))throw Error("The image does not contain valid data.");
+  const blob=new Blob([result.bytes],{type:result.mime||"application/octet-stream"});
+  await validateImageBlob(blob);
+  const bitmap=await createImageBitmap(blob);
+  if(bitmap.width*bitmap.height>LIMITS.maxInputPixels||Math.max(bitmap.width,bitmap.height)>LIMITS.maxInputSide){bitmap.close();throw Error("The image exceeds the 28 MP or 12,000 pixels per side limit.");}
+  return bitmap;
+}
+async function addImageLayer(bitmap,position){
+  if(annotations.filter(a=>a.type==="image").length>=32){bitmap.close();toast("This canvas supports up to 32 added images.",true);return;}
+  const scale=Math.min(1,image.width*.65/bitmap.width,image.height*.65/bitmap.height);
+  const w=Math.max(1,Math.round(bitmap.width*scale)),h=Math.max(1,Math.round(bitmap.height*scale));
+  const count=annotations.filter(a=>a.type==="image").length;
+  const x=position?position.x-w/2:(image.width-w)/2+count*24;
+  const y=position?position.y-h/2:(image.height-h)/2+count*24;
+  const layer={id:crypto.randomUUID(),type:"image",x:clamp(x,0,image.width-w),y:clamp(y,0,image.height-h),w,h};
+  imageLayers.set(layer.id,bitmap);annotations.push(layer);selected=layer.id;tool="select";commit();render();
+}
+export async function loadImage(result,{asNewTab=false,position=null}={}){
   if(!valid(result))return;
-  if(tabs.length>=MAX_TABS){toast("Close a tab to open another image (8 max).",true);return;}
+  if((!image||asNewTab)&&tabs.length>=MAX_TABS){toast("Close a tab to open another image (8 max).",true);return;}
   let next;
   try {
-    if(!(result.bytes instanceof Uint8Array))throw Error("The image does not contain valid data.");
-    const blob=new Blob([result.bytes],{type:result.mime||"application/octet-stream"});
-    await validateImageBlob(blob);
-    next=await createImageBitmap(blob);
-    if(next.width*next.height>LIMITS.maxInputPixels||Math.max(next.width,next.height)>LIMITS.maxInputSide){next.close();throw Error("The image exceeds the 28 MP or 12,000 pixels per side limit.");}
+    next=await decodeImage(result);
   }catch(e){toast(e.message||"Could not open the image.",true);return;}
-  finishDrag();saveTab();const tab={id:crypto.randomUUID(),name:result.name||"Untitled image",image:next,annotations:[],history:null,selected:null,zoom:1,fitMode:true,composition:null,migueBackup:null};
+  finishDrag();
+  if(image&&!asNewTab){await addImageLayer(next,position);return;}
+  saveTab();const tab={id:crypto.randomUUID(),name:result.name||"Untitled image",image:next,annotations:[],imageLayers:new Map(),history:null,selected:null,zoom:1,fitMode:true,composition:null,migueBackup:null};
   tabs.push(tab);loadTab(tab);tool="select";
   history=new History(state());showDocument();
 }
@@ -125,17 +144,40 @@ async function capture(){
     id=await new Promise(resolve=>{for(const item of displays){const b=document.createElement("button");b.textContent=`${item.label}${item.primary?" · Primary":""}     ${item.width} × ${item.height} px`;b.onclick=()=>{d.close();resolve(item.id);};list.append(b);}$("#cancel-monitor").onclick=()=>{d.close();resolve(null);};d.oncancel=()=>resolve(null);});
   }
   if(!id)return;
-  const result=await window.desktop.capture(id);if(result)await loadImage(result);
+  const result=await window.desktop.capture(id);if(result)await loadImage(result,{asNewTab:true});
 }
 for(const button of $$("[data-action]"))button.addEventListener("click",async()=>{
-  if(busy)return;busy=true;sync();try{const action=button.dataset.action;if(action==="capture")await capture();if(action==="open"){const r=await window.desktop.openImage();for(const item of Array.isArray(r)?r:[r])await loadImage(item);}if(action==="paste")await loadImage(await window.desktop.pasteImage());}catch(e){toast("Could not open the image: "+e.message,true);}finally{busy=false;sync();}
+  if(busy)return;busy=true;sync();try{const action=button.dataset.action;if(action==="capture")await capture();if(action==="open"){const r=await window.desktop.openImage();for(const item of Array.isArray(r)?r:[r])await loadImage(item);}if(action==="paste")await pasteIntoCanvas();}catch(e){toast("Could not open the image: "+e.message,true);}finally{busy=false;sync();}
+});
+async function pasteIntoCanvas(files=[]){
+  if(files.length){for(const file of files)await loadImage({bytes:new Uint8Array(await file.arrayBuffer()),mime:file.type,name:file.name});}
+  else await loadImage(await window.desktop.pasteImage());
+}
+document.addEventListener("paste",async event=>{
+  if(busy||$("dialog[open]")||["INPUT","TEXTAREA","SELECT"].includes(document.activeElement?.tagName))return;
+  event.preventDefault();busy=true;sync();
+  try{await pasteIntoCanvas([...event.clipboardData?.files||[]]);}
+  catch(e){toast("Could not paste the image: "+e.message,true);}
+  finally{busy=false;sync();}
+});
+document.addEventListener("dragover",event=>{if([...event.dataTransfer?.types||[]].includes("Files"))event.preventDefault();});
+document.addEventListener("drop",async event=>{
+  if(![...event.dataTransfer?.types||[]].includes("Files"))return;
+  event.preventDefault();if(busy)return;
+  const files=[...event.dataTransfer.files];
+  if(!files.length)return;
+  const position=image?point(event):null;
+  busy=true;sync();
+  try{for(const file of files)await loadImage({bytes:new Uint8Array(await file.arrayBuffer()),mime:file.type,name:file.name},{position});}
+  catch(e){toast("Could not add the image: "+e.message,true);}
+  finally{busy=false;sync();}
 });
 for(const b of $$("[data-tool]"))b.onclick=()=>setTool(b.dataset.tool);
 $("#undo").onclick=undo;$("#redo").onclick=redo;$("#delete").onclick=deleteSelected;
 $("#zoom-in").onclick=()=>setZoom(zoom*1.25);$("#zoom-out").onclick=()=>setZoom(zoom/1.25);$("#zoom-value").onclick=()=>setZoom(1);$("#fit").onclick=()=>{fitMode=true;computeZoom();drawSelection();};
 new ResizeObserver(()=>{computeZoom();drawSelection();}).observe(viewport);
 viewport.addEventListener("scroll",()=>requestPaint(true));
-window.addEventListener("beforeunload",()=>{frame.dispose();renderer.dispose();for(const t of tabs)t.image.close?.();});
+window.addEventListener("beforeunload",()=>{frame.dispose();renderer.dispose();for(const t of tabs){t.image.close?.();for(const bitmap of t.imageLayers.values())bitmap.close?.();}});
 for(const key of ["margin","radius"]){$("#"+key).oninput=e=>changeFinish({[key]:Number(e.target.value)},false);$("#"+key).onchange=()=>commit();}
 for(const key of ["shadow","signature"])$("#"+key).onchange=e=>changeFinish({[key]:e.target.checked});
 $("#signature-text").oninput=e=>changeFinish({signatureText:cleanSignature(e.target.value)},false);$("#signature-text").onchange=()=>commit();
@@ -158,16 +200,40 @@ function fitText(a){const ctx=canvas.getContext("2d");ctx.font=textFont(a);a.w=M
 function applyText(patch){const a=annotations.find(a=>a.id===selected&&a.type==="text");if(a){Object.assign(a,patch);fitText(a);}else style={...style,...patch};commit();render();}
 $("#font").onchange=e=>applyText({font:e.target.value});$("#font-size").onchange=e=>applyText({fontSize:Number(e.target.value)});
 $("#stroke").onchange=e=>{const width=Number(e.target.value),a=annotations.find(a=>a.id===selected);if(a)a.width=width;style.width=width;commit();render();};
-function editText(a=null,p=null){textEditing=a?.id||null;textPoint=p;$("#text-title").textContent=a?"Edit text":"Add text";$("#text-value").value=a?.text||"";$("#text-dialog").returnValue="cancel";$("#text-dialog").showModal();$("#text-value").focus();$("#text-value").select();}
-$("#text-cancel").onclick=()=>$("#text-dialog").close("cancel");
-$("#text-dialog").addEventListener("close",()=>{
-  if($("#text-dialog").returnValue!=="ok")return;
-  const text=$("#text-value").value.trim();if(!text)return;
-  const existing=annotations.find(a=>a.id===textEditing);
-  if(existing){existing.text=text;fitText(existing);}
-  else if(textPoint){const a={id:crypto.randomUUID(),type:"text",x:textPoint.x,y:textPoint.y,text,fontSize:style.fontSize,font:style.font,color:style.color,width:style.width};fitText(a);a.y=clamp(a.y,0,Math.max(0,image.height-a.h));annotations.push(a);selected=a.id;}
-  commit();render();
+function positionTextEditor(){
+  if(textEditor.hidden||!image||!composition)return;
+  const a=annotations.find(item=>item.id===textEditing)||{...style,x:textPoint.x,y:textPoint.y};
+  const ctx=canvas.getContext("2d");ctx.font=textFont(a);
+  const w=Math.min(image.width,Math.max(Math.min(120,image.width),Math.ceil(ctx.measureText(textEditor.value||textEditor.placeholder).width+26)));
+  const h=a.fontSize+24,x=clamp(a.x,0,Math.max(0,image.width-w)),y=clamp(a.y,0,Math.max(0,image.height-h));
+  Object.assign(textEditor.style,{left:(composition.x+x)*zoom+"px",top:(composition.y+y)*zoom+"px",width:w*zoom+"px",height:h*zoom+"px",font:textFont({...a,fontSize:a.fontSize*zoom}),padding:"0 "+12*zoom+"px",borderRadius:6*zoom+"px"});
+  textEditor.style.color=a.color;
+}
+function finishTextEditor(save=true){
+  if(textEditor.hidden)return;
+  const text=textEditor.value.trim(),existing=annotations.find(a=>a.id===textEditing),p=textPoint;
+  textEditor.hidden=true;textEditing=null;textPoint=null;
+  if(save&&text){
+    if(existing&&existing.text!==text){existing.text=text;fitText(existing);commit();}
+    else if(!existing&&p){const a={id:crypto.randomUUID(),type:"text",x:p.x,y:p.y,text,fontSize:style.fontSize,font:style.font,color:style.color,width:style.width};fitText(a);annotations.push(a);selected=a.id;commit();}
+  }
+  render();
+}
+function editText(a=null,p=null){
+  finishTextEditor();
+  textEditing=a?.id||null;textPoint=p||{x:a.x,y:a.y};
+  textEditor.value=a?.text||"";textEditor.placeholder="Type text · Enter to save";
+  textEditor.hidden=false;positionTextEditor();textEditor.focus();
+  if(a)textEditor.select();
+  requestPaint(true);
+}
+textEditor.addEventListener("input",positionTextEditor);
+textEditor.addEventListener("keydown",event=>{
+  if(event.key==="Enter"){event.preventDefault();finishTextEditor();interaction.focus();}
+  else if(event.key==="Escape"){event.preventDefault();finishTextEditor(false);interaction.focus();}
+  else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="s"){event.preventDefault();finishTextEditor();exportImage("save");}
 });
+textEditor.addEventListener("blur",()=>finishTextEditor());
 $("#edit-text").onclick=()=>{const a=annotations.find(a=>a.id===selected);if(a?.type==="text")editText(a);};
 function point(event){return imagePoint(event.clientX,event.clientY,stage.getBoundingClientRect(),composition);}
 function inImage(p){return p.x>=0&&p.y>=0&&p.x<=image.width&&p.y<=image.height;}
@@ -183,7 +249,7 @@ function handleAt(a,p){
 // only by their edge so new annotations can still be placed inside them.
 const areaTypes=["rectangle","redact","blur"];
 // Redactions move only with Select, so drawing next to one can never uncover the data it hides.
-const grabbable=a=>tool==="select"||a.type!=="redact";
+const grabbable=a=>tool==="select"||!["redact","image"].includes(a.type);
 function target(p){
   const a=annotations.find(a=>a.id===selected),handle=a&&grabbable(a)?handleAt(a,p):null;
   if(handle)return {a,handle};
@@ -196,12 +262,17 @@ function grab(p){
 }
 function toolCursor(){return tool==="select"?"default":tool==="text"?"text":"crosshair";}
 interaction.addEventListener("pointerdown",event=>{
-  if(!image||event.button!==0)return;const p=point(event);interaction.focus();interaction.setPointerCapture(event.pointerId);
+  if(!image||event.button!==0)return;const p=point(event);
+  if(tool==="text"){
+    const existing=[...annotations].reverse().find(a=>a.type==="text"&&hitAnnotation(a,p));
+    if(existing){event.preventDefault();selected=existing.id;sync();editText(existing);return;}
+    if(inImage(p)){event.preventDefault();editText(null,p);return;}
+  }
+  interaction.focus();interaction.setPointerCapture(event.pointerId);
   const grabbed=grab(p);
   if(grabbed){selected=grabbed.id;drag=grabbed;sync();drawSelection();return;}
   if(tool==="select"){selected=null;sync();drawSelection();return;}
   if(!inImage(p))return;
-  if(tool==="text"){editText(null,p);return;}
   if(tool==="number"){
     const size=Math.min(Math.max(44,defaultStyle.fontSize*1.7),image.width,image.height);
     const a={id:crypto.randomUUID(),type:"number",x:clamp(p.x,size/2,image.width-size/2),y:clamp(p.y,size/2,image.height-size/2),size,number:nextNumber(annotations),color:style.color};annotations.push(a);selected=a.id;commit();render();return;
@@ -219,6 +290,15 @@ function updateDrag(event){
   if(drag.kind==="resize"){
     const o=drag.original;
     if(a.type==="arrow"){if(drag.handle==="start"){a.x=p.x;a.y=p.y;}else{a.x2=p.x;a.y2=p.y;}}
+    else if(a.type==="image"){
+      const west=drag.handle.includes("w"),north=drag.handle.includes("n");
+      const anchorX=west?o.x+o.w:o.x,anchorY=north?o.y+o.h:o.y,ratio=o.w/o.h;
+      const wantedW=west?anchorX-p.x:p.x-anchorX,wantedH=north?anchorY-p.y:p.y-anchorY;
+      const suggestedW=Math.abs(wantedW-o.w)>=Math.abs(wantedH-o.h)*ratio?wantedW:wantedH*ratio;
+      const maxW=Math.min(west?anchorX:image.width-anchorX,(north?anchorY:image.height-anchorY)*ratio);
+      const w=clamp(suggestedW,Math.min(3,maxW),maxW),h=w/ratio;
+      Object.assign(a,{x:west?anchorX-w:anchorX,y:north?anchorY-h:anchorY,w,h});
+    }
     else{const oppositeX=drag.handle.includes("w")?o.x+o.w:o.x,oppositeY=drag.handle.includes("n")?o.y+o.h:o.y;Object.assign(a,normalRect(oppositeX,oppositeY,p.x,p.y));a.w=Math.max(3,a.w);a.h=Math.max(3,a.h);}
   }
   render();

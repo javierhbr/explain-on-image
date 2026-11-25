@@ -29,7 +29,7 @@ try {
     const result=await page.evaluate(async()=>{
       const c=document.createElement("canvas");c.width=3000;c.height=2000;const x=c.getContext("2d");x.fillStyle="#627fa1";x.fillRect(0,0,c.width,c.height);
       const data=c.toDataURL("image/png");c.width=1;
-      await (await import("./editor.mjs")).loadImage({bytes:Uint8Array.from(atob(data.split(",")[1]),c=>c.charCodeAt(0)),mime:"image/png",name:"Prueba de recursos"});
+      await (await import("./editor.mjs")).loadImage({bytes:Uint8Array.from(atob(data.split(",")[1]),c=>c.charCodeAt(0)),mime:"image/png",name:"Prueba de recursos"},{asNewTab:true});
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const vp=document.querySelector("#viewport");
       return {preview:document.querySelector("#composition").width*document.querySelector("#composition").height,interaction:document.querySelector("#interaction").width*document.querySelector("#interaction").height,max:Math.ceil(vp.clientWidth*2)*Math.ceil(vp.clientHeight*2)};
@@ -42,7 +42,7 @@ try {
       const c=document.createElement("canvas");c.width=2000;c.height=6500;
       c.getContext("2d").fillRect(0,0,c.width,c.height);
       const b=await new Promise(r=>c.toBlob(r));c.width=c.height=1;
-      await (await import("./editor.mjs")).loadImage({bytes:new Uint8Array(await b.arrayBuffer()),mime:"image/png",name:"Prueba vertical de 13 MP"});
+      await (await import("./editor.mjs")).loadImage({bytes:new Uint8Array(await b.arrayBuffer()),mime:"image/png",name:"Prueba vertical de 13 MP"},{asNewTab:true});
     });
     await page.locator("#ratio-wide").click();
     await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));

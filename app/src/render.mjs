@@ -36,6 +36,7 @@ function paintRedactions(ctx,annotations) {
 export class CompositionRenderer {
   constructor(image=null) {
     this.image=image;this.redacted=null;this.redactionKey=null;this.blurs=new Map();this.cachePixels=0;
+    this.layers=new Map();
     this.blurBudget=MAX_BLUR_CACHE_PIXELS;this.exportPixels=0;this.signatureFallback="";
     this.stats={previewPaints:0,nativePaints:0,blurBuilds:0,sourceBuilds:0};
   }
@@ -47,22 +48,35 @@ export class CompositionRenderer {
     if(this.image===image)return;
     this.dispose();this.image=image;
   }
+  setLayers(layers) {
+    this.layers=layers;
+    this.redactionKey=null;
+    this.clearBlurCache();
+  }
   dispose() {
     this.clearBlurCache();release(this.redacted);this.redacted=null;this.redactionKey=null;this.image=null;
   }
   source(annotations) {
     const redactions=annotations.filter(a=>a.type==="redact");
-    const key=JSON.stringify(redactions.map(a=>[a.x,a.y,a.w,a.h,a.color]));
+    const imageLayers=annotations.filter(a=>a.type==="image");
+    const key=JSON.stringify([
+      redactions.map(a=>[a.x,a.y,a.w,a.h,a.color]),
+      imageLayers.map(a=>[a.id,a.x,a.y,a.w,a.h])
+    ]);
     if(key!==this.redactionKey) {
       this.clearBlurCache();
       this.redactionKey=key;
-      if(!redactions.length){release(this.redacted);this.redacted=null;}
+      if(!redactions.length&&!imageLayers.length){release(this.redacted);this.redacted=null;}
       else {
         const {width,height}=imageSize(this.image);
         this.redacted ||= makeCanvas(width,height);
         resize(this.redacted,width,height);
         const ctx=this.redacted.getContext("2d");
         ctx.clearRect(0,0,width,height);ctx.drawImage(this.image,0,0);
+        for(const layer of imageLayers){
+          const bitmap=this.layers.get(layer.id);
+          if(bitmap)ctx.drawImage(bitmap,layer.x,layer.y,layer.w,layer.h);
+        }
         // No filter or resampling may see pixels underneath these masks.
         paintRedactions(ctx,redactions);this.stats.sourceBuilds++;
       }
@@ -114,7 +128,7 @@ export class CompositionRenderer {
         ctx.drawImage(tile.canvas,tile.x,tile.y,tile.w,tile.h);ctx.restore();
       }
     }
-    for(const a of annotations)if(a.type!=="blur"&&a.type!=="redact")drawAnnotation(ctx,a,pixelScale);
+    for(const a of annotations)if(a.type!=="blur"&&a.type!=="redact"&&a.type!=="image")drawAnnotation(ctx,a,pixelScale);
     paintRedactions(ctx,annotations);
     ctx.restore();
     if(finish.signature){
